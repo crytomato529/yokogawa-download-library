@@ -1,0 +1,131 @@
+# Yokogawa Download Library Skill
+
+## 中文说明
+
+这是一个 Codex skill，用于按关键词或分类搜索横河电机公开资料库，导出完整清单，对比新旧清单，并增量归档可访问资料。它不依赖浏览器点击，而是直接调用横河资料库页面使用的公开 JSON 接口。
+
+适合用于：
+
+- 搜索并归档横河产品资料，例如 `prosafe-rs`
+- 导出 JSON/CSV 清单
+- 对比两次搜索结果，发现新增、删除或变更
+- 下载公开 PDF、ZIP、软件包等直链文件
+- 将公开详情页保存为 HTML 归档
+- 中断后重新运行并自动跳过已完成项目
+
+### 常用命令
+
+搜索并生成清单：
+
+```bash
+python scripts/yokogawa_library.py search --keyword "prosafe-rs" --out prosafe-rs_manifest.json --csv prosafe-rs_manifest.csv
+```
+
+全量同步。首次正式运行请不要加 `--limit`：
+
+```bash
+python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest prosafe-rs_manifest.json --csv prosafe-rs_manifest.csv --dir prosafe-rs_downloads
+```
+
+中断后继续：
+
+```bash
+python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest prosafe-rs_manifest.json --csv prosafe-rs_manifest.csv --dir prosafe-rs_downloads
+```
+
+烟测或限速归档：
+
+```bash
+python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest prosafe-rs_manifest.json --csv prosafe-rs_manifest.csv --dir prosafe-rs_downloads --limit 2
+```
+
+只下载原始文件直链，不保存详情页 HTML：
+
+```bash
+python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest prosafe-rs_manifest.json --dir prosafe-rs_downloads --direct-only
+```
+
+### 文件命名
+
+下载文件和页面归档按以下规则保存：
+
+```text
+<文档类型> - <文档号> - <文档名称> - <版本>.<扩展名>
+```
+
+示例：
+
+```text
+Technical Information - TI 32S01J30-01E - Explosion Protection (ProSafe-RS) - Edition 26.pdf
+```
+
+### 注意事项
+
+- `--limit` 仅用于测试、临时限速或验证断点续传，不适合正式首次全量归档。
+- 下载状态保存在下载目录的 `.yokogawa_download_state.json` 中。
+- 脚本会跳过登录、锁定或软件协议确认类条目，除非后续另行实现授权流程。
+
+## English
+
+This is a Codex skill for searching Yokogawa Electric's public Library by keyword or category, exporting complete manifests, comparing old and new manifests, and incrementally archiving accessible public materials. It calls the public JSON endpoint used by the library page instead of automating browser clicks.
+
+Use it to:
+
+- Search and archive Yokogawa product materials such as `prosafe-rs`
+- Export JSON/CSV manifests
+- Compare two manifest snapshots for added, removed, and changed records
+- Download public direct-link files such as PDFs, ZIPs, and software packages
+- Save public detail pages as HTML archives
+- Resume after interruption by skipping completed files/pages
+
+### Common Commands
+
+Search and write a manifest:
+
+```bash
+python scripts/yokogawa_library.py search --keyword "prosafe-rs" --out prosafe-rs_manifest.json --csv prosafe-rs_manifest.csv
+```
+
+Full synchronization. For a real first run, do not pass `--limit`:
+
+```bash
+python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest prosafe-rs_manifest.json --csv prosafe-rs_manifest.csv --dir prosafe-rs_downloads
+```
+
+Resume after interruption:
+
+```bash
+python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest prosafe-rs_manifest.json --csv prosafe-rs_manifest.csv --dir prosafe-rs_downloads
+```
+
+Smoke test or throttled archive run:
+
+```bash
+python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest prosafe-rs_manifest.json --csv prosafe-rs_manifest.csv --dir prosafe-rs_downloads --limit 2
+```
+
+Download only original direct-link files, without saving detail pages as HTML:
+
+```bash
+python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest prosafe-rs_manifest.json --dir prosafe-rs_downloads --direct-only
+```
+
+### Filename Rule
+
+Saved files and page archives use:
+
+```text
+<Document Type> - <Document Number> - <Document Name> - <Version>.<ext>
+```
+
+Example:
+
+```text
+Technical Information - TI 32S01J30-01E - Explosion Protection (ProSafe-RS) - Edition 26.pdf
+```
+
+### Notes
+
+- `--limit` is for smoke tests, temporary throttling, or resume validation. Do not use it for a real first full archive.
+- Download state is stored in `.yokogawa_download_state.json` inside the download directory.
+- The script skips login-required, locked, and software-agreement records unless an authorized workflow is implemented later.
