@@ -242,10 +242,10 @@ def search_library(args: argparse.Namespace) -> dict[str, Any]:
         "count": len(items),
         "direct_download_count": sum(1 for item in items if item["direct_download_url"]),
         "detail_page_count": sum(1 for item in items if item["download_skip_reason"] == "detail_page"),
-        "accessible_archive_count": sum(
+        "download_target_count": sum(
             1
             for item in items
-            if item["direct_download_url"] or item["download_skip_reason"] == "detail_page"
+            if item["direct_download_url"]
         ),
         "manual_required_count": sum(
             1
@@ -376,6 +376,12 @@ def download_one(url: str, dest: Path) -> tuple[int, str]:
 
 def save_page(url: str, dest: Path) -> tuple[int, str]:
     body = request_bytes(url)
+    if not body:
+        raise RuntimeError("detail page returned an empty response")
+    lower = body[:4096].lower()
+    waf_markers = (b"aws waf", b"request blocked", b"access denied", b"forbidden")
+    if any(marker in lower for marker in waf_markers):
+        raise RuntimeError("detail page appears to be blocked by WAF/access control")
     digest = hashlib.sha256(body).hexdigest()
     tmp = dest.with_suffix(dest.suffix + ".part")
     tmp.write_bytes(body)
@@ -383,10 +389,10 @@ def save_page(url: str, dest: Path) -> tuple[int, str]:
     return len(body), digest
 
 
-def item_archive_url(item: dict[str, Any], direct_only: bool = False) -> tuple[str, str]:
+def item_archive_url(item: dict[str, Any], include_detail_pages: bool = False) -> tuple[str, str]:
     if item.get("direct_download_url"):
         return item["direct_download_url"], "file"
-    if not direct_only and item.get("detail_page_url") and item.get("download_skip_reason") == "detail_page":
+    if include_detail_pages and item.get("detail_page_url") and item.get("download_skip_reason") == "detail_page":
         return item["detail_page_url"], "page"
     return "", ""
 
@@ -419,7 +425,7 @@ def command_search(args: argparse.Namespace) -> int:
     print(
         f"Saved {manifest['count']} results "
         f"({manifest['direct_download_count']} direct files, "
-        f"{manifest['accessible_archive_count']} accessible items) to {args.out}"
+        f"{manifest['download_target_count']} default download targets) to {args.out}"
     )
     return 0
 
@@ -434,7 +440,7 @@ def command_download(args: argparse.Namespace) -> int:
     downloaded = skipped = failed = inaccessible = 0
 
     for item in manifest.get("items", []):
-        url, archive_type = item_archive_url(item, args.direct_only)
+        url, archive_type = item_archive_url(item, args.include_detail_pages)
         key = item_key(item)
         if not url:
             inaccessible += 1
@@ -558,6 +564,7 @@ def command_sync(args: argparse.Namespace) -> int:
         state=args.state,
         limit=args.limit,
         direct_only=args.direct_only,
+        include_detail_pages=args.include_detail_pages,
         force=args.force,
     )
     return command_download(download_args)
@@ -585,12 +592,13 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--csv", default="", help="Optional CSV summary path.")
     search.set_defaults(func=command_search)
 
-    download = subparsers.add_parser("download", help="Archive accessible items from a manifest incrementally.")
+    download = subparsers.add_parser("download", help="Download public direct-link files from a manifest incrementally.")
     download.add_argument("--manifest", required=True, help="Input manifest JSON path.")
     download.add_argument("--dir", required=True, help="Download directory.")
     download.add_argument("--state", default="", help="Optional download state JSON path.")
-    download.add_argument("--limit", type=int, default=0, help="Download at most N new accessible items in this run.")
-    download.add_argument("--direct-only", action="store_true", help="Only download direct file URLs; do not save detail pages as HTML.")
+    download.add_argument("--limit", type=int, default=0, help="Download at most N new items in this run.")
+    download.add_argument("--direct-only", action="store_true", help="Deprecated compatibility flag; direct files are the default.")
+    download.add_argument("--include-detail-pages", action="store_true", help="Also try to save public detail pages as HTML; may be blocked by WAF.")
     download.add_argument("--force", action="store_true", help="Redownload files even if state says they exist.")
     download.set_defaults(func=command_download)
 
@@ -606,8 +614,9 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--csv", default="", help="Optional CSV summary path.")
     sync.add_argument("--dir", required=True, help="Download directory.")
     sync.add_argument("--state", default="", help="Optional download state JSON path.")
-    sync.add_argument("--limit", type=int, default=0, help="Download at most N new accessible items in this run.")
-    sync.add_argument("--direct-only", action="store_true", help="Only download direct file URLs; do not save detail pages as HTML.")
+    sync.add_argument("--limit", type=int, default=0, help="Download at most N new items in this run.")
+    sync.add_argument("--direct-only", action="store_true", help="Deprecated compatibility flag; direct files are the default.")
+    sync.add_argument("--include-detail-pages", action="store_true", help="Also try to save public detail pages as HTML; may be blocked by WAF.")
     sync.add_argument("--force", action="store_true", help="Redownload files even if state says they exist.")
     sync.set_defaults(func=command_sync)
 

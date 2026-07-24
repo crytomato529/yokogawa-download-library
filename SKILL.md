@@ -1,6 +1,6 @@
 ---
 name: yokogawa-library
-description: Search Yokogawa Electric's public Library at https://www.yokogawa.com/library/ by keyword or category, export complete result manifests, compare old/new manifests, and incrementally archive accessible public materials with normalized filenames. Use when Codex needs Yokogawa product manuals, specifications, guides, technical documents, bulletins, PDFs, ZIPs, software downloads, detail-page archives, or recurring synchronization of Yokogawa library search results without browser clicking.
+description: Search Yokogawa Electric's public Library at https://www.yokogawa.com/library/ by keyword or category, export complete result manifests, compare old/new manifests, and incrementally download public direct-link materials with normalized filenames. Use when Codex needs Yokogawa product manuals, specifications, guides, technical documents, bulletins, PDFs, ZIPs, software downloads, or recurring synchronization of Yokogawa library search results without browser clicking.
 ---
 
 # Yokogawa Library
@@ -15,7 +15,7 @@ Use the bundled script for deterministic access to Yokogawa's public library sea
 python scripts/yokogawa_library.py search --keyword "prosafe-rs" --out manifest.json
 ```
 
-2. Archive accessible public items from a manifest:
+2. Download public direct-link files from a manifest:
 
 ```bash
 python scripts/yokogawa_library.py download --manifest manifest.json --dir downloads
@@ -27,13 +27,13 @@ python scripts/yokogawa_library.py download --manifest manifest.json --dir downl
 python scripts/yokogawa_library.py compare --old old_manifest.json --new new_manifest.json --out diff.json
 ```
 
-4. Search and archive in one run. Use this for normal full synchronization:
+4. Search and download in one run. Use this for normal full synchronization:
 
 ```bash
 python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest manifest.json --dir downloads
 ```
 
-Do not pass `--limit` for normal first-time runs. The first run should refresh the full manifest and archive every accessible public item. If the run is interrupted, rerun the same command; the state file makes it skip completed files/pages and continue the unfinished work.
+Do not pass `--limit` for normal first-time runs. The first run should refresh the full manifest and download every public direct-link file. If the run is interrupted, rerun the same command; the state file makes it skip completed files and continue the unfinished work.
 
 Use `--limit N` only for smoke tests, temporary throttling, or controlled validation. The limit means "download at most N new accessible items in this run"; already completed items do not consume the limit.
 
@@ -47,12 +47,14 @@ Use `--limit N` only for smoke tests, temporary throttling, or controlled valida
   - `--products` for product/category IDs (`p`)
   - `--industries` for industry IDs (`i`)
 - For broad or recurring jobs, keep the manifest JSON as the source of truth. Every `sync` refreshes the full manifest first. If a later search reports 274 items instead of 273, the manifest is replaced with the new full list and a `_diff.json` file records added, removed, and changed items.
-- Manifest summary fields include `count`, `direct_download_count`, `detail_page_count`, `accessible_archive_count`, and `manual_required_count`.
+- Manifest summary fields include `count`, `direct_download_count`, `detail_page_count`, `download_target_count`, and `manual_required_count`.
 
 ## Download Behavior
 
-- Download public direct file URLs discovered in search results.
-- Save public detail-page results as `.html` archives by default. Use `--direct-only` when only original direct-download files should be saved.
+- Download public direct file URLs discovered in search results by default.
+- Treat detail-page-only records as manifest entries, not normal download targets. Yokogawa detail pages are often protected by AWS WAF when fetched by script, so page archiving is not reliable in release use.
+- Use `--include-detail-pages` only for experimental page-archive attempts. Empty responses and WAF/access-control pages are treated as failures and are not marked completed.
+- `--direct-only` is kept as a compatibility flag; direct-link files are already the default.
 - Skip locked, login-required, and software-agreement results unless a future workflow explicitly handles authentication or agreements.
 - Omit `--limit` for production/full downloads. Use `--limit N` only for validation runs so a test does not pull the full library.
 - The downloader records state in `.yokogawa_download_state.json` inside the download directory and skips already downloaded files when URL and local file metadata match.
@@ -60,7 +62,7 @@ Use `--limit N` only for smoke tests, temporary throttling, or controlled valida
 
 ## Filename Rule
 
-Save downloaded files and page archives using:
+Save downloaded files using:
 
 ```text
 <Document Type> - <Document Number> - <Document Name> - <Version>.<ext>
@@ -79,4 +81,4 @@ For a quick smoke test, run:
 python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest prosafe-rs_manifest.json --dir prosafe-rs_downloads --limit 2
 ```
 
-Expect the search to report hundreds of results, while this validation command saves only two new accessible items. For real use, remove `--limit`; rerunning the same full command after an interruption fills in the remaining accessible items and skips everything already completed.
+Expect the search to report hundreds of results, while this validation command saves only two new direct-link files. For real use, remove `--limit`; rerunning the same full command after an interruption fills in the remaining public direct-link files and skips everything already completed.
