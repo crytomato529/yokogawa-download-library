@@ -1,8 +1,10 @@
-# Yokogawa Download Library Skill
+# Yokogawa Download Library
 
 Language / 语言: [中文](README.md) | **English**
 
-This is a Codex skill for searching Yokogawa Electric's public Library by keyword or category, exporting complete manifests, comparing old and new manifests, and incrementally archiving accessible public materials. It calls the public JSON endpoint used by the library page instead of automating browser clicks.
+A general-purpose synchronization tool for Yokogawa Electric library materials. It searches Yokogawa's public library by keyword or category, exports complete manifests, compares old and new manifests, and incrementally archives accessible public materials. The core is a standalone Python command-line script: it does not require Codex and does not rely on browser clicking. Claude Code, Cursor, other AI agents, automation scripts, or a human terminal workflow can all use it directly.
+
+`SKILL.md` is only an optional Codex adapter. The reusable tool is `scripts/yokogawa_library.py`.
 
 ## Use Cases
 

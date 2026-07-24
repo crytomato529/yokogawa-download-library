@@ -1,8 +1,10 @@
-# Yokogawa Download Library Skill
+# Yokogawa Download Library
 
 语言 / Language: **中文** | [English](README.en.md)
 
-这是一个 Codex skill，用于按关键词或分类搜索横河电机公开资料库，导出完整清单，对比新旧清单，并增量归档可访问资料。它不依赖浏览器点击，而是直接调用横河资料库页面使用的公开 JSON 接口。
+一个通用的横河电机资料库同步工具。它可以按关键词或分类搜索横河公开资料库，导出完整清单，对比新旧清单，并增量归档可访问资料。工具本体是独立 Python 命令行脚本，不依赖 Codex，也不依赖浏览器点击；Claude Code、Cursor、其他 AI Agent、自动化脚本或人工命令行都可以直接使用。
+
+仓库中的 `SKILL.md` 只是给 Codex 使用的可选适配说明；核心能力在 `scripts/yokogawa_library.py`。
 
 ## 适合用途
 
