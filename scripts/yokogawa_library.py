@@ -19,6 +19,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from library_common import atomic_json, configure_console, download_validated, fingerprint, open_url, save_snapshot, valid_record
+
 
 API_URL = "https://yc3.yokocms.com/api/technical-library/"
 SITE_BASE = "https://www.yokogawa.com"
@@ -60,18 +62,20 @@ def request_json(url: str, retries: int = 3, delay: float = 1.0) -> dict[str, An
                     "User-Agent": USER_AGENT,
                 },
             )
-            with urllib.request.urlopen(req, timeout=60) as response:
+            with open_url(req, timeout=60) as response:
                 return json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = exc
+            if isinstance(exc, urllib.error.HTTPError) and exc.code in (401, 403, 404, 567):
+                break
             if attempt + 1 < retries:
                 time.sleep(delay * (attempt + 1))
-    raise RuntimeError(f"Failed to fetch JSON from {url}: {last_error}")
+    raise RuntimeError(f"Failed to fetch JSON from {url}: {last_error}") from last_error
 
 
 def request_bytes(url: str, timeout: int = 180) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Referer": SITE_BASE})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
+    with open_url(req, timeout=timeout) as response:
         return response.read()
 
 
@@ -202,6 +206,7 @@ def search_library(args: argparse.Namespace) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     total = None
     seen_keys: set[str] = set()
+    repeated_page = False
 
     while True:
         params = build_params(args, offset, size)
@@ -209,15 +214,21 @@ def search_library(args: argparse.Namespace) -> dict[str, Any]:
         data = request_json(url)
         hits = data.get("hits", {})
         total = hits.get("total", total)
+        if isinstance(total, dict):
+            total = total.get("value")
         raw_hits = hits.get("hits", [])
         if not raw_hits:
             break
+        before_count = len(items)
         for raw_hit in raw_hits:
             item = normalize_hit(raw_hit)
             if item["key"] not in seen_keys:
                 seen_keys.add(item["key"])
                 items.append(item)
         print(f"Fetched {len(items)} of {total if total is not None else '?'}", file=sys.stderr)
+        if len(items) == before_count:
+            repeated_page = True
+            break
         offset += len(raw_hits)
         if args.max_results and len(items) >= args.max_results:
             items = items[: args.max_results]
@@ -240,12 +251,14 @@ def search_library(args: argparse.Namespace) -> dict[str, Any]:
         },
         "total_reported": total,
         "count": len(items),
+        "search_complete": not repeated_page and total is not None and len(items) >= int(total),
         "direct_download_count": sum(1 for item in items if item["direct_download_url"]),
+        "download_target_count": sum(1 for item in items if item["direct_download_url"]),
         "detail_page_count": sum(1 for item in items if item["download_skip_reason"] == "detail_page"),
-        "download_target_count": sum(
+        "accessible_archive_count": sum(
             1
             for item in items
-            if item["direct_download_url"]
+            if item["direct_download_url"] or item["download_skip_reason"] == "detail_page"
         ),
         "manual_required_count": sum(
             1
@@ -258,8 +271,7 @@ def search_library(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def write_manifest(manifest: dict[str, Any], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_json(path, manifest)
 
 
 def write_csv(manifest: dict[str, Any], path: Path) -> None:
@@ -304,7 +316,7 @@ def document_type_for_item(item: dict[str, Any]) -> str:
 def version_for_item(item: dict[str, Any]) -> str:
     edition = str(item.get("edition") or "").strip()
     if edition:
-        return f"Edition {edition}"
+        return f"Edition {edition}" if re.fullmatch(r"[\d.]+", edition) else edition
     updated = str(item.get("updated_at_display") or "").strip()
     if updated:
         return updated
@@ -324,8 +336,10 @@ def filename_for_item(item: dict[str, Any]) -> str:
         str(item.get("name") or "").strip(),
         version_for_item(item),
     ]
+    fixed_length = sum(len(part) for index, part in enumerate(parts) if index != 2)
+    parts[2] = parts[2][:max(16, 150 - fixed_length - 9)]
     stem = sanitize_filename(" - ".join(part for part in parts if part))
-    suffix = ext if stem.lower().endswith(ext.lower()) else ext
+    suffix = "" if ext and stem.lower().endswith(ext.lower()) else ext
     return stem + suffix
 
 
@@ -334,6 +348,7 @@ def unique_destination(path: Path, key: str) -> Path:
         return path
     suffix = path.suffix
     stem = path.stem
+    key = hashlib.sha256(key.encode("utf-8")).hexdigest()[:10]
     candidate = path.with_name(f"{stem} [{key}]{suffix}")
     counter = 2
     while candidate.exists():
@@ -354,54 +369,30 @@ def load_state(path: Path) -> dict[str, Any]:
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
     state["updated_at"] = now_iso()
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_json(path, state)
 
 
 def download_one(url: str, dest: Path) -> tuple[int, str]:
-    digest = hashlib.sha256()
-    total = 0
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Referer": SITE_BASE})
-    with urllib.request.urlopen(req, timeout=180) as response, tmp.open("wb") as handle:
-        while True:
-            chunk = response.read(1024 * 256)
-            if not chunk:
-                break
-            handle.write(chunk)
-            digest.update(chunk)
-            total += len(chunk)
-    tmp.replace(dest)
-    return total, digest.hexdigest()
+    result = download_validated(url, dest, {"User-Agent": USER_AGENT, "Referer": SITE_BASE})
+    return result["bytes"], result["sha256"]
 
 
 def save_page(url: str, dest: Path) -> tuple[int, str]:
-    body = request_bytes(url)
-    if not body:
-        raise RuntimeError("detail page returned an empty response")
-    lower = body[:4096].lower()
-    waf_markers = (b"aws waf", b"request blocked", b"access denied", b"forbidden")
-    if any(marker in lower for marker in waf_markers):
-        raise RuntimeError("detail page appears to be blocked by WAF/access control")
-    digest = hashlib.sha256(body).hexdigest()
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    tmp.write_bytes(body)
-    tmp.replace(dest)
-    return len(body), digest
+    return download_one(url, dest)
 
 
-def item_archive_url(item: dict[str, Any], include_detail_pages: bool = False) -> tuple[str, str]:
+def item_archive_url(item: dict[str, Any], direct_only: bool = True) -> tuple[str, str]:
+    if item.get("locked") or item.get("software_agreement"):
+        return "", ""
     if item.get("direct_download_url"):
         return item["direct_download_url"], "file"
-    if include_detail_pages and item.get("detail_page_url") and item.get("download_skip_reason") == "detail_page":
+    if not direct_only and item.get("detail_page_url") and item.get("download_skip_reason") == "detail_page":
         return item["detail_page_url"], "page"
     return "", ""
 
 
 def completed_record_is_current(record: dict[str, Any] | None, url: str) -> bool:
-    if not record or record.get("url") != url or record.get("status") != "completed":
-        return False
-    path = Path(record.get("path", ""))
-    return path.exists() and record.get("bytes") == path.stat().st_size
+    return valid_record(record, url)
 
 
 def move_completed_record_to_desired_path(record: dict[str, Any], desired: Path) -> Path:
@@ -425,7 +416,7 @@ def command_search(args: argparse.Namespace) -> int:
     print(
         f"Saved {manifest['count']} results "
         f"({manifest['direct_download_count']} direct files, "
-        f"{manifest['download_target_count']} default download targets) to {args.out}"
+        f"{manifest['accessible_archive_count']} accessible items) to {args.out}"
     )
     return 0
 
@@ -437,10 +428,11 @@ def command_download(args: argparse.Namespace) -> int:
     state_path = Path(args.state) if args.state else download_dir / ".yokogawa_download_state.json"
     state = load_state(state_path)
     files = state.setdefault("files", {})
+    errors = state.setdefault("errors", {})
     downloaded = skipped = failed = inaccessible = 0
 
     for item in manifest.get("items", []):
-        url, archive_type = item_archive_url(item, args.include_detail_pages)
+        url, archive_type = item_archive_url(item, args.direct_only)
         key = item_key(item)
         if not url:
             inaccessible += 1
@@ -448,8 +440,9 @@ def command_download(args: argparse.Namespace) -> int:
         filename = filename_for_item(item)
         desired = download_dir / filename
         existing = files.get(key)
-        if not args.force and completed_record_is_current(existing, url):
-            move_completed_record_to_desired_path(existing, desired)
+        item_fingerprint = fingerprint(item)
+        current = valid_record(existing, url, item_fingerprint)
+        if not args.force and current and not getattr(args, "revalidate", False):
             skipped += 1
             continue
         if args.limit and downloaded >= args.limit:
@@ -459,29 +452,43 @@ def command_download(args: argparse.Namespace) -> int:
             dest = desired
             if dest.exists():
                 dest = unique_destination(dest, key)
-            if archive_type == "page":
-                size, sha256 = save_page(url, dest)
-            else:
-                size, sha256 = download_one(url, dest)
+            result = download_validated(url, dest, {"User-Agent": USER_AGENT, "Referer": SITE_BASE},
+                                        existing if current and not args.force else None)
+            if existing and not result["unchanged"] and existing.get("path") != result["path"]:
+                state.setdefault("history", []).append(existing)
             files[key] = {
+                **result,
                 "key": key,
                 "status": "completed",
+                "fingerprint": item_fingerprint,
                 "archive_type": archive_type,
                 "url": url,
-                "path": str(dest),
-                "bytes": size,
-                "sha256": sha256,
-                "downloaded_at": now_iso(),
+                "downloaded_at": existing.get("downloaded_at") if result["unchanged"] and existing else now_iso(),
+                "checked_at": now_iso(),
                 "name": item.get("name", ""),
                 "code": item.get("code", ""),
+                "document_type": document_type_for_item(item),
+                "version": item.get("edition", ""),
+                "source_url": item.get("source_url") or url,
+                "source_tier": item.get("source_tier", "official"),
+                "metadata_verified": item.get("metadata_verified", False),
+                "language": item.get("document_language") or item.get("language", ""),
             }
-            downloaded += 1
+            errors.pop(key, None)
+            if result["unchanged"]:
+                skipped += 1
+            else:
+                downloaded += 1
             save_state(state_path, state)
         except Exception as exc:  # noqa: BLE001 - CLI should continue per file.
             failed += 1
+            errors[key] = {"url": url, "error": str(exc), "failed_at": now_iso()}
+            save_state(state_path, state)
             print(f"FAILED {url}: {exc}", file=sys.stderr)
 
     save_state(state_path, state)
+    atomic_json(download_dir / "download_report.json", {"generated_at": now_iso(), "downloaded": downloaded,
+                "skipped": skipped, "failed": failed, "inaccessible": inaccessible, "errors": errors})
     print(
         f"Download complete: {downloaded} downloaded, {skipped} skipped, "
         f"{inaccessible} inaccessible, {failed} failed"
@@ -525,6 +532,8 @@ def compare_manifests(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any
         "new_count": len(new_items),
         "added_count": len(added_keys),
         "removed_count": len(removed_keys),
+        "removal_confirmed": False,
+        "removal_note": "Not observed in this search; local files are retained. Check source before declaring withdrawal.",
         "changed_count": len(changed),
         "added": [new_items[key] for key in added_keys],
         "removed": [old_items[key] for key in removed_keys],
@@ -547,7 +556,9 @@ def command_sync(args: argparse.Namespace) -> int:
     manifest = search_library(args)
     manifest_path = Path(args.manifest)
     previous = load_json(manifest_path) if manifest_path.exists() else None
-    write_manifest(manifest, manifest_path)
+    if not save_snapshot(manifest_path, previous, manifest):
+        print("Partial search saved separately; previous full manifest retained", file=sys.stderr)
+        return 2
     if args.csv:
         write_csv(manifest, Path(args.csv))
     if previous:
@@ -564,8 +575,8 @@ def command_sync(args: argparse.Namespace) -> int:
         state=args.state,
         limit=args.limit,
         direct_only=args.direct_only,
-        include_detail_pages=args.include_detail_pages,
         force=args.force,
+        revalidate=args.revalidate,
     )
     return command_download(download_args)
 
@@ -592,14 +603,16 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--csv", default="", help="Optional CSV summary path.")
     search.set_defaults(func=command_search)
 
-    download = subparsers.add_parser("download", help="Download public direct-link files from a manifest incrementally.")
+    download = subparsers.add_parser("download", help="Archive accessible items from a manifest incrementally.")
     download.add_argument("--manifest", required=True, help="Input manifest JSON path.")
     download.add_argument("--dir", required=True, help="Download directory.")
     download.add_argument("--state", default="", help="Optional download state JSON path.")
-    download.add_argument("--limit", type=int, default=0, help="Download at most N new items in this run.")
-    download.add_argument("--direct-only", action="store_true", help="Deprecated compatibility flag; direct files are the default.")
-    download.add_argument("--include-detail-pages", action="store_true", help="Also try to save public detail pages as HTML; may be blocked by WAF.")
+    download.add_argument("--limit", type=int, default=0, help="Download at most N new accessible items in this run.")
+    download_mode = download.add_mutually_exclusive_group()
+    download_mode.add_argument("--direct-only", dest="direct_only", action="store_true", default=True, help="Download direct files only (default).")
+    download_mode.add_argument("--include-detail-pages", dest="direct_only", action="store_false", help="Also try public detail-page HTML; may be blocked by WAF.")
     download.add_argument("--force", action="store_true", help="Redownload files even if state says they exist.")
+    download.add_argument("--revalidate", action="store_true", help="Check existing URLs using HTTP validators or content SHA-256.")
     download.set_defaults(func=command_download)
 
     compare = subparsers.add_parser("compare", help="Compare old and new manifests.")
@@ -614,16 +627,19 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--csv", default="", help="Optional CSV summary path.")
     sync.add_argument("--dir", required=True, help="Download directory.")
     sync.add_argument("--state", default="", help="Optional download state JSON path.")
-    sync.add_argument("--limit", type=int, default=0, help="Download at most N new items in this run.")
-    sync.add_argument("--direct-only", action="store_true", help="Deprecated compatibility flag; direct files are the default.")
-    sync.add_argument("--include-detail-pages", action="store_true", help="Also try to save public detail pages as HTML; may be blocked by WAF.")
+    sync.add_argument("--limit", type=int, default=0, help="Download at most N new accessible items in this run.")
+    sync_mode = sync.add_mutually_exclusive_group()
+    sync_mode.add_argument("--direct-only", dest="direct_only", action="store_true", default=True, help="Download direct files only (default).")
+    sync_mode.add_argument("--include-detail-pages", dest="direct_only", action="store_false", help="Also try public detail-page HTML; may be blocked by WAF.")
     sync.add_argument("--force", action="store_true", help="Redownload files even if state says they exist.")
+    sync.add_argument("--revalidate", action="store_true", help="Check existing URLs for silent content replacement.")
     sync.set_defaults(func=command_sync)
 
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_console()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

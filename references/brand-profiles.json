@@ -1,0 +1,31 @@
+{
+  "yokogawa": {
+    "label": "Yokogawa",
+    "source_mode": "official_api",
+    "module": "yokogawa_library",
+    "homepage": "https://www.yokogawa.com/library/",
+    "official_domains": ["yokogawa.com", "yokocms.com", "yokogawa.co.jp"],
+    "search_domains": ["yokogawa.com", "yokogawa.co.jp"]
+  },
+  "schneider": {
+    "label": "Schneider Electric",
+    "source_mode": "official_api",
+    "module": "schneider_download_library",
+    "homepage": "https://www.se.com/ww/en/download/",
+    "official_domains": ["se.com", "schneider-electric.cn", "schneider-electric.com"]
+  },
+  "honeywell": {
+    "label": "Honeywell",
+    "source_mode": "web_search",
+    "homepage": "https://process.honeywell.com/",
+    "official_domains": ["honeywell.com", "honeywellprocess.com"],
+    "search_domains": ["process.honeywell.com", "prod-edam.honeywell.com", "honeywellprocess.com"]
+  },
+  "siemens": {
+    "label": "Siemens",
+    "source_mode": "web_search",
+    "homepage": "https://support.industry.siemens.com/",
+    "official_domains": ["siemens.com", "siemens.cn", "docs.tia.siemens.cloud"],
+    "search_domains": ["support.industry.siemens.com", "cache.industry.siemens.com", "docs.tia.siemens.cloud"]
+  }
+}

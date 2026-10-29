@@ -1,0 +1,14 @@
+{
+  "products": [
+    {
+      "id": "prosafe-rs",
+      "keywords": ["ProSafe-RS", "ProSafe RS"],
+      "library_args": [],
+      "document_numbers": ["IM 32P06S10-01Z1", "IM 32P06C10-01EN", "IM 32P01C20-01EN"],
+      "extra_queries": [
+        "\"ProSafe-RS\" site:web-material3.yokogawa.com filetype:pdf",
+        "\"ProSafe-RS\" \"hardware document guide\""
+      ]
+    }
+  ]
+}

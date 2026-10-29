@@ -1,4 +1,4 @@
 interface:
   display_name: "Yokogawa Library"
-  short_description: "Search, diff, and incrementally archive Yokogawa library materials."
-  default_prompt: "Use $yokogawa-library to search Yokogawa library materials by keyword, refresh the manifest, and archive new accessible items."
+  short_description: "Collect Yokogawa manuals across official and web sources"
+  default_prompt: "Use $yokogawa-library to refresh product-manual searches across the official library and public web, compare versions, resume downloads and export a traceable local corpus index."

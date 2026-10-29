@@ -1,84 +1,51 @@
 ---
 name: yokogawa-library
-description: Search Yokogawa Electric's public Library at https://www.yokogawa.com/library/ by keyword or category, export complete result manifests, compare old/new manifests, and incrementally download public direct-link materials with normalized filenames. Use when Codex needs Yokogawa product manuals, specifications, guides, technical documents, bulletins, PDFs, ZIPs, software downloads, or recurring synchronization of Yokogawa library search results without browser clicking.
+description: Collect Yokogawa product manuals and specifications from the public Library API and supplemental web searches. Use for complete official-library manifests, product aliases and manual-number searches, recurring collection, version comparison, resumable downloads, and traceable local RAG corpus indexes, especially ProSafe-RS and CENTUM. Portable Python scripts work with Codex, Claude Code and other agents without browser clicking.
 ---
 
 # Yokogawa Library
 
-Use the bundled script for deterministic access to Yokogawa's public library search API. Do not automate browser clicks for normal searches; the website's Angular app calls the same JSON endpoint directly.
+Use Python 3.10+ scripts for search, download and state handling. Run from this skill directory or resolve script paths against it. Keep collection output in a stable user-owned directory outside the skill. Read [references/manual-watch.md](references/manual-watch.md) for multi-product, web-wide or recurring collection; use [the example config](references/manual-watch.example.json) to start.
 
-## Core Workflow
+## Recurring product-manual workflow
 
-1. Search by keyword and save a manifest:
+Use `scripts/manual_watch.py` to combine complete official-library pagination with supplemental web queries. Search product aliases, official global/regional sites and attachment hosts, then public third-party sources. Inspect document guides/reference lists for additional exact document-number queries. Export the agent's web search results to the documented portable JSON format; import them for deterministic downloads. An optional Tavily backend supports scheduler-only runs.
 
 ```bash
-python scripts/yokogawa_library.py search --keyword "prosafe-rs" --out manifest.json
+python scripts/manual_watch.py plan --config watch.json --out web-query-plan.json
+python scripts/manual_watch.py run --config watch.json --root manual-library --web-results web-results.json
 ```
 
-2. Download public direct-link files from a manifest:
+The watcher downloads PDFs by default and retains all official item types in the catalog; `download_formats` config can expand formats. The first normal run downloads every accessible candidate; subsequent runs compare metadata, resume missing/failed files and keep older files. Do not pass `--limit` or `--max-results` unless testing. Add `--revalidate` for periodic same-URL content checks. Report official counts, web freshness/coverage, added/changed manuals, downloaded files, restricted/review items and failed sources separately. Failed API/missing or stale web runs are partial coverage, never success or zero manuals. Do not promise entire-web completeness.
+
+## Single official-library search
+
+For interruption recovery use `manual_watch.py resume --config watch.json --root manual-library`; it does not repeat discovery or change observation dates. Use `run` for a fresh search. Read [deep collection](references/deep-collection.md) for official-page parsing, extensionless downloads, PDF reference-number leads and catalog gap checks. `rag-current.jsonl` is a current local ingestion subset, never proof of the latest applicable edition.
 
 ```bash
-python scripts/yokogawa_library.py download --manifest manifest.json --dir downloads
-```
-
-3. Compare a previous manifest with a new manifest:
-
-```bash
+python scripts/yokogawa_library.py search --keyword "prosafe-rs" --out manifest.json --csv manifest.csv
+python scripts/yokogawa_library.py download --manifest manifest.json --dir downloads --direct-only
 python scripts/yokogawa_library.py compare --old old_manifest.json --new new_manifest.json --out diff.json
+python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest manifest.json --dir downloads --direct-only
 ```
 
-4. Search and download in one run. Use this for normal full synchronization:
+API: `https://yc3.yokocms.com/api/technical-library/`; default Global region `--region-id 1`, relevance `--sort r`. Resource/product/industry filters: `--types`, `--products`, `--industries` comma-separated IDs. Keep the same scope for one manifest. A truncated/incomplete refresh preserves an existing full manifest and writes `_partial.json`; `_history/` retains previous snapshots. Removed results mean not observed, not confirmed withdrawal.
+
+## Download invariants
+
+- Direct files are the default; `--direct-only` remains compatible. Only explicit `--include-detail-pages` enables experimental HTML archiving, which can be blocked by AWS WAF (including empty HTTP 204). HTML is not a downloaded manual; failed/challenge/empty responses must not be marked completed.
+- Locked, login-required and agreement-required entries remain documented but are skipped. Do not bypass authentication or accept agreements automatically.
+- `.yokogawa_download_state.json` tracks SHA-256, metadata fingerprint, HTTP validators and retryable errors. Only valid nonempty files are skipped; a new edition/date at the same URL is downloaded again. State writes are atomic. Older state without fingerprints is conservatively redownloaded once.
+- `--limit N` means at most N newly downloaded items; completed items do not consume it. `--force` redownloads; `--revalidate` checks validators/content even for completed files.
+- Verified web metadata can update a known URL without creating a duplicate identity. Per-query timestamps prevent stale imports from appearing fresh. A refused local proxy can use a process-local direct fallback; remote HTTP denials remain failures. Optional `certifi` repairs incomplete CA trust stores while keeping TLS validation enabled. Read the workflow reference for explicit network modes.
+- Naming: `<Document Type> - <Document Number> - <Document Name> - <Version>.<ext>`. API category/code/edition provide metadata; edition uses `Edition N`. Unknown fields are omitted; date is a fallback label, not a guessed edition. Collisions receive a short key suffix and never overwrite older files.
+
+## Validation
 
 ```bash
-python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest manifest.json --dir downloads
+python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest test-manifest.json --dir test-downloads --direct-only --limit 2
+python scripts/yokogawa_library.py download --manifest test-manifest.json --dir test-downloads --direct-only --limit 2
+python scripts/test_library.py
 ```
 
-Do not pass `--limit` for normal first-time runs. The first run should refresh the full manifest and download every public direct-link file. If the run is interrupted, rerun the same command; the state file makes it skip completed files and continue the unfinished work.
-
-Use `--limit N` only for smoke tests, temporary throttling, or controlled validation. The limit means "download at most N new accessible items in this run"; already completed items do not consume the limit.
-
-## Search Notes
-
-- The script calls `https://yc3.yokocms.com/api/technical-library/`.
-- Default region is Global, `region_id=1`.
-- Keyword searches use relevance sort by default. Use `--sort d` for the site's default/date style sort.
-- Category filters can be passed as comma-separated IDs:
-  - `--types` for library/resource type IDs (`t`)
-  - `--products` for product/category IDs (`p`)
-  - `--industries` for industry IDs (`i`)
-- For broad or recurring jobs, keep the manifest JSON as the source of truth. Every `sync` refreshes the full manifest first. If a later search reports 274 items instead of 273, the manifest is replaced with the new full list and a `_diff.json` file records added, removed, and changed items.
-- Manifest summary fields include `count`, `direct_download_count`, `detail_page_count`, `download_target_count`, and `manual_required_count`.
-
-## Download Behavior
-
-- Download public direct file URLs discovered in search results by default.
-- Treat detail-page-only records as manifest entries, not normal download targets. Yokogawa detail pages are often protected by AWS WAF when fetched by script, so page archiving is not reliable in release use.
-- Use `--include-detail-pages` only for experimental page-archive attempts. Empty responses and WAF/access-control pages are treated as failures and are not marked completed.
-- `--direct-only` is kept as a compatibility flag; direct-link files are already the default.
-- Skip locked, login-required, and software-agreement results unless a future workflow explicitly handles authentication or agreements.
-- Omit `--limit` for production/full downloads. Use `--limit N` only for validation runs so a test does not pull the full library.
-- The downloader records state in `.yokogawa_download_state.json` inside the download directory and skips already downloaded files when URL and local file metadata match.
-- Use `--force` to redownload known files.
-
-## Filename Rule
-
-Save downloaded files using:
-
-```text
-<Document Type> - <Document Number> - <Document Name> - <Version>.<ext>
-```
-
-- Document type comes from Yokogawa's category, such as `General Specification`, `Instruction Manual`, `Technical Information`, `Application Note`, `White Paper`, `Brochure`, `Certificate`, `Drawing`, or `Software`.
-- Document number comes from the `code` field when present.
-- Version uses `Edition <number>` when the item has an edition; otherwise it falls back to Yokogawa's displayed update date.
-- If two items produce the same filename, append the item key to the duplicate file only.
-
-## Validation Example
-
-For a quick smoke test, run:
-
-```bash
-python scripts/yokogawa_library.py sync --keyword "prosafe-rs" --manifest prosafe-rs_manifest.json --dir prosafe-rs_downloads --limit 2
-```
-
-Expect the search to report hundreds of results, while this validation command saves only two new direct-link files. For real use, remove `--limit`; rerunning the same full command after an interruption fills in the remaining public direct-link files and skips everything already completed.
+The second run must skip the first two and download the next two. Test counts are live, not fixed at an old 273. Verify PDF signatures, positive sizes, state/report records and failure visibility; never infer success just from finding an output filename.
